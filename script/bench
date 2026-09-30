@@ -1,0 +1,105 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Benchmark over the golden corpus: for each category and effort level, recall, false positives, time per
+# page and the pass that found each code. Uses the library defaults (stop: :found) unless STOP is set.
+#
+#   mise exec -- bundle exec rake bench
+#   EFFORTS=fast,normal STOP=exhaustive OUT=docs/benchmark.md mise exec -- bundle exec rake bench
+
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+root = File.expand_path("..", __dir__)
+ENV["ZXING_LIB"] ||= %w[libZXing.dylib libZXing.so].map { |n| File.join(root, "vendor/zxing/lib", n) }.find { |p| File.exist?(p) }
+
+require "zxing_ffi"
+require "digest"
+require "yaml"
+
+fixtures = File.join(root, "test", "fixtures")
+merged = File.join(fixtures, "manifest.yml")
+files = File.exist?(merged) ? [merged] : Dir[File.join(fixtures, "manifest.d", "*.yml")].sort
+entries = files.flat_map { |f| Array(YAML.safe_load_file(f, aliases: true)).map { |e| e.merge("_root" => fixtures) } }
+# Local real documents (script/real_corpus, gitignored, personal data) when present. The report is committed, so they
+# are numbered, never named: file names and folders tell what the documents are.
+local = File.join(root, "tmp", "real_corpus")
+if File.exist?(File.join(local, "manifest.yml"))
+  files << File.join(local, "manifest.yml")
+  real = Array(YAML.safe_load_file(File.join(local, "manifest.yml"), aliases: true))
+  entries += real.each_with_index.map { |e, i| e.merge("_root" => local, "_label" => "real document #{i + 1}") }
+end
+entries.select! { |e| e["expect_error"].nil? && !e["expected"].nil? && File.exist?(File.join(e["_root"], e["file"])) }
+
+efforts = ENV.fetch("EFFORTS", "fast,normal,thorough").split(",").map(&:to_sym)
+stop = ENV["STOP"]&.then { |s| s.match?(/\A\d+\z/) ? Integer(s) : s.to_sym } || :found
+
+Row = Struct.new(:entries, :pages, :expected, :found, :false_positives, :seconds, :passes, :errors)
+rows = Hash.new { |h, k| h[k] = Row.new(entries: 0, pages: 0, expected: 0, found: 0, false_positives: 0, seconds: 0.0, passes: Hash.new(0), errors: 0) }
+misses = []
+
+efforts.each do |effort|
+  entries.each do |entry|
+    row = rows[[entry["category"], effort]]
+    row.entries += 1
+    name = entry.fetch("_label", entry["file"])
+    expected = entry["expected"]
+    row.expected += expected.size
+    options = (entry["options"] || {}).to_h { |k, v| [k.to_sym, v] }
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    begin
+      results = ZXingFFI.scan_pages(File.join(entry["_root"], entry["file"]), effort: effort, stop: stop, **options).to_a
+    rescue ZXingFFI::Error => e
+      row.errors += 1
+      misses << "#{effort} #{name}: #{e.class.name.split("::").last}"
+      next
+    ensure
+      row.seconds += Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+    end
+    row.pages += results.size
+    barcodes = results.flat_map(&:barcodes)
+    by_digest = expected.any? { |e| e.key?("text_sha256") && !e.key?("text") } # real documents (personal data)
+    wanted = expected.map { |e| [e.fetch("page", 1), e["text"] || e.fetch("text_sha256")] }.tally
+    got = barcodes.group_by { |b| [b.page, by_digest ? Digest::SHA256.hexdigest(b.text) : b.text] }
+    wanted.each do |key, count|
+      hits = Array(got[key]).first(count)
+      row.found += hits.size
+      hits.each { |b| row.passes[b.pass] += 1 }
+      next unless hits.size < count
+
+      # real documents: the report is committed, so name the code by page only (even a SHA-256 of a short ID number
+      # can be brute-forced)
+      misses << "#{effort} #{name}: missed #{by_digest ? "a code on page #{key[0]}" : key.inspect}"
+    end
+    got.each { |key, list| row.false_positives += [list.size - wanted.fetch(key, 0), 0].max }
+  end
+end
+
+lines = []
+lines << "| category | effort | entries | pages | recall | false positives | ms/page | passes that found codes | errors |"
+lines << "|---|---|---:|---:|---:|---:|---:|---|---:|"
+rows.sort_by { |(category, effort), _| [category.to_s, efforts.index(effort)] }.each do |(category, effort), row|
+  recall = row.expected.zero? ? "—" : format("%.1f%%", 100.0 * row.found / row.expected)
+  ms = row.pages.zero? ? "—" : format("%.0f", 1000 * row.seconds / row.pages)
+  passes = row.passes.sort_by { |_, n| -n }.map { |pass, n| "#{pass} #{n}" }.join(", ")
+  lines << "| #{category} | #{effort} | #{row.entries} | #{row.pages} | #{recall} | #{row.false_positives} | #{ms} | #{passes} | #{row.errors} |"
+end
+totals = efforts.map do |effort|
+  selected = rows.select { |(_, e), _| e == effort }.values
+  expected = selected.sum(&:expected)
+  found = selected.sum(&:found)
+  pages = selected.sum(&:pages)
+  format("%s: recall %.1f%% (%d/%d), false positives %d, %.0f ms/page", effort, expected.zero? ? 0 : 100.0 * found / expected,
+    found, expected, selected.sum(&:false_positives), pages.zero? ? 0 : 1000 * selected.sum(&:seconds) / pages)
+end
+
+report = +"# Benchmark\n\n"
+report << "Generated by `rake bench` on #{Time.now.strftime("%Y-%m-%d")} — zxing-cpp #{ZXingFFI::Native.load!.version}, " \
+  "Ruby #{RUBY_VERSION}, #{RUBY_PLATFORM}, stop: #{stop}. Corpus: #{entries.size} entries from #{files.map { |f| f.delete_prefix(root + "/") }.join(", ")}.\n\n"
+report << lines.join("\n") << "\n\n"
+report << "**Totals** — " << totals.join("; ") << "\n"
+report << "\nMisses and errors:\n\n" << misses.map { |m| "- #{m}" }.join("\n") << "\n" if misses.any?
+
+puts report
+if (out = ENV["OUT"])
+  File.write(File.expand_path(out, root), report)
+  warn "wrote #{out}"
+end

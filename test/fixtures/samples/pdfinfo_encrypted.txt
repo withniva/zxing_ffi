@@ -1,0 +1,18 @@
+Title:           Encrypted fixture
+Creator:         zxing_ffi script/fixtures/pdfs.rb
+Producer:        Prawn 2.5.0
+CreationDate:    Wed Dec 31 19:00:00 2025 EST
+Custom Metadata: no
+Metadata Stream: no
+Tagged:          no
+UserProperties:  no
+Suspects:        no
+Form:            none
+JavaScript:      no
+Pages:           1
+Encrypted:       yes (print:yes copy:yes change:yes addNotes:yes algorithm:AES-256)
+Page size:       612 x 792 pts (letter)
+Page rot:        0
+File size:       17372 bytes
+Optimized:       no
+PDF version:     1.7

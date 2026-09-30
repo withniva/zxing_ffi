@@ -1,0 +1,15 @@
+page   num  type   width height color comp bpc  enc interp  object ID x-ppi y-ppi size ratio
+--------------------------------------------------------------------------------------------
+   1     0 image     154    80  rgb     3   8  image  no   [inline]     144   240 2020B 5.5%
+   1     1 image      96   104  rgb     3   8  jpeg   no   [inline]     144   144 9569B  32%
+   1     2 image      50    50  rgb     3   8  image  no        28  0    72    88  492B 6.6%
+   2     3 image      96   104  rgb     3   8  jpeg   no   [inline]     144   144 9569B  32%
+   3     4 image      96   104  rgb     3   8  jpeg   no   [inline]     144   144 9569B  32%
+   4     5 image      96   104  rgb     3   8  jpeg   no   [inline]     144   144 9569B  32%
+   5     6 image      96   104  rgb     3   8  jpeg   no   [inline]     144   144 9569B  32%
+   6     7 image      96   104  rgb     3   8  jpeg   no   [inline]     144   144 9569B  32%
+   7     8 image      96   104  rgb     3   8  jpeg   no   [inline]     144   144 9569B  32%
+   8     9 image      96   104  rgb     3   8  jpeg   no   [inline]     144   144 9569B  32%
+   9    10 image      96   104  rgb     3   8  jpeg   no   [inline]     144   144 9569B  32%
+   9    11 image     717   538  rgb     3   8  jpeg   no        86  0   307   898 38.2K 3.4%
+   9    12 image     717   538  rgb     3   8  jpeg   no        87  0   447  1257 58.4K 5.2%

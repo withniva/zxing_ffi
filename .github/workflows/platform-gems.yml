@@ -1,0 +1,185 @@
+# Prebuilt platform gems: builds every
+# zxing_ffi-<version>-<platform>.gem, installs each one in clean environments without a system libZXing, scans
+# fixtures with it, and collects the verified gems (plus the ruby-platform gem) in one artifact. Publishing stays
+# manual.
+#
+# Cost notes (private repository): aarch64 Linux runs under QEMU on x86_64 runners (arm64 runners are not free);
+# one arm64 macOS job builds both darwin gems (x86_64 is cross-compiled; Intel runners are being retired) and
+# verifies them (x86_64 under Rosetta). Compiled libraries are cached between runs, except for tags.
+name: Platform gems
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "rakelib/**"
+      - "script/platform_gems/**"
+      - "zxing_ffi.gemspec"
+      - "lib/zxing_ffi/library_loader.rb"
+      - "lib/zxing_ffi/diagnostics.rb"
+      - ".github/workflows/platform-gems.yml"
+
+concurrency:
+  group: platform-gems-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ruby-gem:
+    name: build ruby-platform gem
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - run: bundle exec rake build
+      - name: The ruby-platform gem bundles no library
+        run: |
+          gem specification pkg/zxing_ffi-*.gem files | tee files.yml
+          if grep -q 'vendor/' files.yml; then echo "::error::the ruby-platform gem contains vendor/ files"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gem-ruby
+          path: pkg/*.gem
+          if-no-files-found: error
+
+  linux:
+    name: build ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x86_64-linux-gnu, aarch64-linux-gnu, x86_64-linux-musl, aarch64-linux-musl]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        if: startsWith(matrix.platform, 'aarch64')
+        with:
+          platforms: arm64
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/cache@v4
+        if: github.ref_type != 'tag'
+        with:
+          path: tmp/platform_gems/${{ matrix.platform }}
+          key: platform-lib-${{ matrix.platform }}-${{ hashFiles('rakelib/zxing.rake', 'rakelib/platform_gems.rake', 'script/platform_gems/*.sh') }}
+      # Compiles in quay.io/pypa/manylinux_2_28_* (glibc) or Alpine (musl) and runs check_library.sh there.
+      - run: bundle exec rake gem:platform PLATFORM=${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gem-${{ matrix.platform }}
+          path: pkg/zxing_ffi-*-${{ matrix.platform }}.gem
+          if-no-files-found: error
+
+  verify-linux:
+    name: verify ${{ matrix.platform }} on ${{ matrix.image }}
+    needs: [ruby-gem, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # glibc 2.28 (the baseline) with Ruby 3.3 from AppStream, an older Debian, and a current one.
+          - { platform: x86_64-linux-gnu, image: "almalinux:8" }
+          - { platform: x86_64-linux-gnu, image: "ruby:3.3-slim-bullseye" }
+          - { platform: x86_64-linux-gnu, image: "ruby:3.4-slim" }
+          - { platform: aarch64-linux-gnu, image: "almalinux:8" }
+          - { platform: aarch64-linux-gnu, image: "ruby:3.4-slim" }
+          - { platform: x86_64-linux-musl, image: "ruby:3.3-alpine3.18" }
+          - { platform: x86_64-linux-musl, image: "ruby:3.4-alpine" }
+          - { platform: aarch64-linux-musl, image: "ruby:3.4-alpine" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        if: startsWith(matrix.platform, 'aarch64')
+        with:
+          platforms: arm64
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      # All Linux gems and the ruby gem: `gem install zxing_ffi` must pick this platform's gem among them.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gem-*
+          path: pkg
+          merge-multiple: true
+      # In the container: no libZXing on the system; install from an index of pkg/; scan a PDF and a PNG from
+      # outside the repository; check the loaded library is the gem's vendor/lib file ("bundled" in --diagnose).
+      - run: bundle exec rake gem:verify PLATFORM=${{ matrix.platform }} IMAGE=${{ matrix.image }}
+
+  darwin:
+    name: build + verify darwin
+    needs: [ruby-gem]
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/cache@v4
+        if: github.ref_type != 'tag'
+        with:
+          path: |
+            tmp/platform_gems/arm64-darwin
+            tmp/platform_gems/x86_64-darwin
+          key: platform-lib-darwin-${{ hashFiles('rakelib/zxing.rake', 'rakelib/platform_gems.rake', 'script/platform_gems/*.sh') }}
+      - name: Tools (CMake if missing; Poppler, ImageMagick and Rosetta for the verification)
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          command -v cmake || brew install cmake
+          brew install poppler imagemagick
+          arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+      # arm64 natively (minos 11.0), x86_64 cross-compiled (minos 10.13); both checked with lipo/otool/codesign.
+      - run: bundle exec rake gem:platform PLATFORM=arm64-darwin,x86_64-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gem-arm64-darwin
+          path: pkg/zxing_ffi-*-arm64-darwin.gem
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gem-x86_64-darwin
+          path: pkg/zxing_ffi-*-x86_64-darwin.gem
+          if-no-files-found: error
+      - uses: actions/download-artifact@v4
+        with:
+          name: gem-ruby
+          path: pkg
+      # arm64: full install + scans from an index of pkg/, the bundled library must win over any other.
+      # x86_64: no x86_64 Ruby here, so its library decodes a PGM through script/platform_gems/smoke.c under Rosetta.
+      - run: bundle exec rake gem:verify PLATFORM=arm64-darwin,x86_64-darwin
+
+  collect:
+    name: collect verified gems
+    needs: [verify-linux, darwin]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gem-*
+          path: gems
+          merge-multiple: true
+      - run: |
+          cd gems
+          ls -l
+          sha256sum *.gem | tee SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zxing_ffi-gems
+          path: gems/
+          if-no-files-found: error

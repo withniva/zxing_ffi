@@ -1,0 +1,18 @@
+Title:           Three pages, codes on 1 and 3
+Creator:         zxing_ffi script/fixtures/pdfs.rb
+Producer:        Prawn 2.5.0
+CreationDate:    Wed Dec 31 19:00:00 2025 EST
+Custom Metadata: no
+Metadata Stream: no
+Tagged:          no
+UserProperties:  no
+Suspects:        no
+Form:            none
+JavaScript:      no
+Pages:           3
+Encrypted:       no
+Page size:       612 x 792 pts (letter)
+Page rot:        0
+File size:       21786 bytes
+Optimized:       no
+PDF version:     1.3

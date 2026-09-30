@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZXING_PINNED: "3.1.1"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - run: bundle exec rake standard
+      - name: Gem builds
+        run: gem build zxing_ffi.gemspec
+
+  test:
+    name: test (${{ matrix.os }}, ruby ${{ matrix.ruby }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # CRuby only: JRuby and TruffleRuby are not supported.
+        ruby: ["3.3", "3.4", "4.0"]
+    env:
+      ZXING_REQUIRE_NATIVE: "1"
+      ZXING_EXPECT_TOOLS: "poppler,vips,image_magick"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake poppler-utils libvips-tools imagemagick libheif-plugin-libde265
+      - name: Install system packages (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake poppler vips imagemagick
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - uses: actions/cache@v4
+        with:
+          path: vendor/zxing
+          key: zxing-${{ env.ZXING_PINNED }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rakelib/zxing.rake') }}
+      - run: bundle exec rake zxing:build
+      - run: echo "ZXING_LIB=$(bundle exec rake -s zxing:lib_path)" >> "$GITHUB_ENV"
+      - run: bundle exec rake test
+
+  # Minimum supported zxing-cpp release.
+  min-zxing:
+    runs-on: ubuntu-latest
+    env:
+      ZXING_VERSION: "3.1.0"
+      ZXING_REQUIRE_NATIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake poppler-utils libvips-tools imagemagick libheif-plugin-libde265
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/cache@v4
+        with:
+          path: vendor/zxing
+          key: zxing-3.1.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rakelib/zxing.rake') }}
+      - run: bundle exec rake zxing:build
+      - run: echo "ZXING_LIB=$(bundle exec rake -s zxing:lib_path)" >> "$GITHUB_ENV"
+      - run: bundle exec rake test:unit test:native
+
+  # Loader variants: each job installs only some tools and removes the rest,
+  # so detection and LoaderUnavailable paths are exercised for real.
+  loaders:
+    name: loaders (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { variant: all, packages: "poppler-utils libvips-tools imagemagick libheif-plugin-libde265", expect: "poppler,vips,image_magick" }
+          - { variant: poppler-only, packages: "poppler-utils", expect: "poppler" }
+          - { variant: vips-only, packages: "libvips-tools libheif-plugin-libde265", expect: "vips" }
+          - { variant: imagemagick-only, packages: "imagemagick libheif-plugin-libde265", expect: "image_magick" }
+          - { variant: none, packages: "", expect: "" }
+    env:
+      ZXING_REQUIRE_NATIVE: "1"
+      ZXING_EXPECT_TOOLS: ${{ matrix.expect }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove preinstalled tools
+        run: |
+          sudo apt-get remove -y --purge 'imagemagick*' 'libmagickcore*' poppler-utils 'libvips*' || true
+          for tool in magick convert identify pdftoppm pdfinfo vips; do
+            if command -v "$tool"; then echo "::error::$tool is still installed"; exit 1; fi
+          done
+      - name: Install variant packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ${{ matrix.packages }}
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/cache@v4
+        with:
+          path: vendor/zxing
+          key: zxing-${{ env.ZXING_PINNED }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rakelib/zxing.rake') }}
+      - run: bundle exec rake zxing:build
+      - run: echo "ZXING_LIB=$(bundle exec rake -s zxing:lib_path)" >> "$GITHUB_ENV"
+      - run: bundle exec rake test
+
+  # The built gem installs into an empty GEM_HOME and works outside the repository.
+  gem-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake poppler-utils imagemagick
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/cache@v4
+        with:
+          path: vendor/zxing
+          key: zxing-${{ env.ZXING_PINNED }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rakelib/zxing.rake') }}
+      - run: bundle exec rake zxing:build
+      - run: echo "ZXING_LIB=$(bundle exec rake -s zxing:lib_path)" >> "$GITHUB_ENV"
+      - run: gem build zxing_ffi.gemspec
+      - name: Install into an empty GEM_HOME and scan from outside the repository
+        run: |
+          export GEM_HOME="$RUNNER_TEMP/gems" GEM_PATH="$RUNNER_TEMP/gems" BUNDLE_GEMFILE=
+          gem install ./zxing_ffi-*.gem --no-document
+          cd "$RUNNER_TEMP"
+          "$GEM_HOME/bin/zxing-scan" --text-only "$GITHUB_WORKSPACE/test/fixtures/pdfs/vector_qr_code128_datamatrix.pdf" | tee out.txt
+          grep -q "ZXF-VECTOR-128" out.txt
+          "$GEM_HOME/bin/zxing-scan" --diagnose
