@@ -1,0 +1,18 @@
+Title:           Absurd page 1000000 x 1000000 pt
+Creator:         zxing_ffi script/fixtures/pdfs.rb
+Producer:        Prawn 2.5.0
+CreationDate:    Wed Dec 31 19:00:00 2025 EST
+Custom Metadata: no
+Metadata Stream: no
+Tagged:          no
+UserProperties:  no
+Suspects:        no
+Form:            none
+JavaScript:      no
+Pages:           1
+Encrypted:       no
+Page    1 size:  1e+06 x 1e+06 pts
+Page    1 rot:   0
+File size:       1739 bytes
+Optimized:       no
+PDF version:     1.3

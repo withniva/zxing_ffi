@@ -1,0 +1,28 @@
+# Bundler / gem build
+/.bundle/
+/vendor/bundle/
+/pkg/
+*.gem
+
+# zxing-cpp built by `rake zxing:build` (see rakelib/zxing.rake)
+/vendor/zxing/
+# A platform gem's bundled library is a build artifact (rake gem:platform stages it in tmp/platform_gems/)
+/vendor/lib/
+
+# Scratch space, coverage, docs output
+/tmp/
+/coverage/
+/doc/
+/.yardoc/
+
+# script/real_corpus's document list names private files, so it stays local
+/real_corpus.local.yml
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+.env
+.env*.local
