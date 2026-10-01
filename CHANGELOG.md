@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.1.0)
+## 0.1.0 (2026-10-01)
 
 First release candidate of `zxing_ffi`, a replacement for the unmaintained `zbar` gem.
 

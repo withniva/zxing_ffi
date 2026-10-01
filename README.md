@@ -60,8 +60,7 @@ gem install zxing_ffi ruby-vips   # ruby-vips: in-process image loading with lib
 ```
 
 Instead of copying the library, `export ZXING_LIB=$(rake -s zxing:lib_path)` points at it inside the checkout (for the
-current shell only). Until the gem is published on RubyGems, install it from the checkout:
-`gem build zxing_ffi.gemspec && gem install ./zxing_ffi-*.gem`.
+current shell only).
 
 Or build it yourself with `cmake -DBUILD_SHARED_LIBS=ON -DZXING_C_API=ON -DZXING_READERS=ON -DZXING_WRITERS=OFF` and
 point `ZXING_LIB` at the resulting `libZXing.so`.
@@ -74,8 +73,7 @@ tried), a library bundled with the gem, the dynamic loader's search path (`libZX
 
 For these platforms RubyGems installs a gem with a prebuilt libZXing in its `vendor/lib/` (zxing-cpp 3.1.1 with readers
 and the C API, compiled from the checksum-verified release tarball), so no libZXing has to be installed. Poppler and
-libvips or ImageMagick are still needed for PDFs and images. Until the first release is published, build them with
-`rake gem:platform`.
+libvips or ImageMagick are still needed for PDFs and images. `rake gem:platform` builds them locally.
 
 | Platform gem | Runs on |
 |---|---|
