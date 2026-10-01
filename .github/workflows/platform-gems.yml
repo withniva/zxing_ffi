@@ -3,7 +3,7 @@
 # fixtures with it, and collects the verified gems (plus the ruby-platform gem) in one artifact. Publishing stays
 # manual.
 #
-# Cost notes (private repository): aarch64 Linux runs under QEMU on x86_64 runners (arm64 runners are not free);
+# Cost notes: aarch64 Linux runs under QEMU on x86_64 runners (arm64 runners are not free);
 # one arm64 macOS job builds both darwin gems (x86_64 is cross-compiled; Intel runners are being retired) and
 # verifies them (x86_64 under Rosetta). Compiled libraries are cached between runs, except for tags.
 name: Platform gems
