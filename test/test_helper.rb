@@ -87,6 +87,13 @@ module ZXingFFI
       end
     end
 
+    # Asserts that two images have the same size and that no pixel byte differs by more than +tolerance+.
+    def assert_pixels_within(tolerance, expected, actual, message = nil)
+      assert_equal [expected.width, expected.height], [actual.width, actual.height], message
+      worst = expected.to_bytes.bytes.zip(actual.to_bytes.bytes).map { |a, b| (a - b).abs }.max
+      assert_operator worst, :<=, tolerance, message
+    end
+
     # Runs the block inside a fresh temporary directory, removed afterwards.
     def in_tmpdir(&block)
       Dir.mktmpdir("zxing_ffi_test", &block)

@@ -145,7 +145,7 @@ Every `ZXingFFI.read` option below is accepted too and applies to every pass.
 | `base` | library defaults + your options | fast, normal, thorough |
 | `inverted` | decodes a pixel-inverted copy for white-on-black codes (zxing-cpp's `try_invert` only covers 2D codes, so with it on this pass handles the linear formats) | normal, thorough |
 | `global_binarizer` | global-histogram binarizer | normal, thorough |
-| `high_res` | PDF re-rendered at 2× DPI; small rasters upscaled 2× | normal, thorough |
+| `high_res` | PDF re-rendered at 2× DPI; rasters under 2000 px upscaled 2× (bicubic, so codes at 1–2 px per module resolve) | normal, thorough |
 | `tiles` | overlapping 1024–1536 px tiles, no downscaling (tiny codes on big pages) | thorough |
 | `rotated_45` | image rotated 45° for linear codes at odd angles (also covers 135°/225°/315°) | thorough |
 | `denoise` | `try_denoise: true` (libZXing built with `ZXING_EXPERIMENTAL_API` only) | thorough |

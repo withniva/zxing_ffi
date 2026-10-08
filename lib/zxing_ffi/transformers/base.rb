@@ -7,6 +7,9 @@ module ZXingFFI
     # Geometry contract (shared with {Geometry.rotation_canvas}): {#rotate} turns the image clockwise as
     # displayed (y axis down) about its center and expands the canvas to the rotated bounding box, filling
     # uncovered areas with +background+. {#resize} scales both axes by +scale+ (output side = round(side × scale)).
+    # Upscales are bicubic (Catmull-Rom) with pixel centers aligned: output pixel x samples the input at
+    # (x + 0.5) / f - 0.5, f being output side / input side. Replicating pixels would keep the aliasing of codes
+    # rasterized at 1-2 px per module, which the high_res upscale is there to resolve.
     class Base
       class << self
         # @return [Symbol] registry name

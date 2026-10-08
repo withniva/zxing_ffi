@@ -6,8 +6,8 @@ module ZXingFFI
     #
     # Quarter turns use +rot+ (exact); other angles use libvips' +rotate+, which turns clockwise about the center
     # and expands the canvas like {Geometry.rotation_canvas} (canvas sizes may differ by 1 px because libvips rounds
-    # where the geometry rounds up; the strategy re-centers on the actual output size). Integer upscales replicate
-    # pixels (+zoom+), which keeps bar edges crisp; other scales use a linear kernel.
+    # where the geometry rounds up; the strategy re-centers on the actual output size). Upscales go through
+    # +affine+ with the bicubic interpolator; downscales use +resize+ with a linear kernel.
     class VipsTransformer < Base
       QUARTER_TURNS = {90 => :d90, 180 => :d180, 270 => :d270}.freeze
 
@@ -39,13 +39,7 @@ module ZXingFFI
         raise ArgumentError, "scale must be positive, got #{scale.inspect}" unless scale.is_a?(Numeric) && scale.positive?
 
         vimage = to_vips(image)
-        out =
-          if scale == scale.to_i && scale >= 1
-            vimage.zoom(scale.to_i, scale.to_i)
-          else
-            vimage.resize(scale, kernel: :linear)
-          end
-        to_image(out)
+        to_image((scale > 1) ? upscale(vimage, scale) : vimage.resize(scale, kernel: :linear))
       end
 
       def rotate(image, degrees, background: 255)
@@ -65,6 +59,17 @@ module ZXingFFI
       end
 
       private
+
+      # Not +resize+: its upscales sample a quarter input pixel off center, so at 2x the pixel straddling each
+      # black/white edge comes out mid-gray, right at the binarizer's threshold (crisp EAN-13s in the corpus misread).
+      def upscale(vimage, scale)
+        width = (vimage.width * scale).round
+        height = (vimage.height * scale).round
+        fx = width.to_f / vimage.width
+        fy = height.to_f / vimage.height
+        vimage.affine([fx, 0, 0, fy], interpolate: ::Vips::Interpolate.new("bicubic"), oarea: [0, 0, width, height],
+          idx: 0.5 - 0.5 / fx, idy: 0.5 - 0.5 / fy, extend: :copy)
+      end
 
       def to_vips(image)
         raise ArgumentError, "expected a :lum image, got #{image.format.inspect}" unless image.format == :lum

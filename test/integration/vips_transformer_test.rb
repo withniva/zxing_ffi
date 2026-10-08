@@ -3,7 +3,7 @@
 require "test_helper"
 require_relative "../support/fake_transformer"
 
-# VipsTransformer: sizes, exact quarter turns, and agreement with Geometry.rotation_canvas.
+# VipsTransformer: sizes, centered bicubic upscales, exact quarter turns, and agreement with Geometry.rotation_canvas.
 class VipsTransformerTest < Minitest::Test
   IMAGES = ZXingFFI::SyntheticImages
 
@@ -26,13 +26,13 @@ class VipsTransformerTest < Minitest::Test
     assert_kind_of ZXingFFI::Transformers::VipsTransformer, ZXingFFI::Transformers.first_available(%i[vips])
   end
 
-  def test_integer_upscale_replicates_pixels
+  def test_upscale_is_centered_bicubic
     image = dots
     out = @transformer.resize(image, 2)
 
     assert_equal [120, 80], [out.width, out.height]
     assert_equal :lum, out.format
-    assert_equal @reference.resize(image, 2).to_bytes, out.to_bytes, "2x zoom must equal nearest-neighbour replication"
+    assert_pixels_within 1, @reference.resize(image, 2), out, "2x upscale must match the centered Catmull-Rom reference"
   end
 
   def test_fractional_resize_sizes
@@ -47,6 +47,14 @@ class VipsTransformerTest < Minitest::Test
     require_native!
     small = IMAGES.qr_image(scale: 1, quiet: 2)
     assert_equal [IMAGES::QR_TEXT], ZXingFFI.read(@transformer.resize(small, 3)).map(&:text)
+  end
+
+  def test_upscale_resolves_soft_1_5px_modules
+    require_native!
+    page = ::Vips::Image.new_from_file(fixture_path("images", "tiny_qr_1_5px_upscale.png"))
+    image = ZXingFFI::Image.new(page.write_to_memory, width: page.width, height: page.height)
+    texts = ZXingFFI.read(@transformer.resize(image, 2)).map(&:text)
+    assert texts.any? { |text| text.start_with?("zxing_ffi/tiny_qr_1_5px_upscale") }, "found #{texts.inspect}"
   end
 
   def test_quarter_turns_are_exact
