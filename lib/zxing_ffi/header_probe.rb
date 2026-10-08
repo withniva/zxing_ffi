@@ -35,15 +35,17 @@ module ZXingFFI
       end
 
       # Raises when the header declares more than +max_pixels+ pixels.
+      # @param limit [Symbol] the setting +max_pixels+ comes from, for the error (+:max_source_pixels+ when the image
+      #   would be downscaled to fit)
       # @raise [LimitExceeded]
-      def check!(path, kind, max_pixels)
+      def check!(path, kind, max_pixels, limit: :max_pixels)
         return unless max_pixels
 
         width, height = dimensions(path, kind)
         return unless width && height && width * height > max_pixels
 
         raise LimitExceeded.new("#{File.basename(path)} declares #{width}x#{height} (#{width * height} pixels), " \
-          "exceeding max_pixels #{max_pixels}", limit: :max_pixels, value: width * height)
+          "exceeding #{limit} #{max_pixels}", limit: limit, value: width * height)
       end
 
       private

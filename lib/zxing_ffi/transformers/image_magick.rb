@@ -5,8 +5,8 @@ module ZXingFFI
     # Resize and rotate by piping PGM through ImageMagick.
     #
     # +-rotate+ turns clockwise and expands the canvas (ImageMagick's canvas can be 1 px larger than
-    # {Geometry.rotation_canvas}; the strategy re-centers on the actual size). Integer upscales use +-sample+
-    # (pixel replication); other scales use +-resize+.
+    # {Geometry.rotation_canvas}; the strategy re-centers on the actual size). Upscales use +-resize+ with the
+    # Catmull-Rom filter (+Catrom+); downscales use +-resize+ with its default filter.
     class ImageMagickTransformer < Base
       class << self
         def transformer_name = :image_magick
@@ -36,8 +36,8 @@ module ZXingFFI
 
         width = [(image.width * scale).round, 1].max
         height = [(image.height * scale).round, 1].max
-        operation = (scale == scale.to_i && scale >= 1) ? "-sample" : "-resize"
-        pipe(image, [operation, "#{width}x#{height}!"], width, height)
+        filter = (scale > 1) ? %w[-filter Catrom] : []
+        pipe(image, [*filter, "-resize", "#{width}x#{height}!"], width, height)
       end
 
       def rotate(image, degrees, background: 255)

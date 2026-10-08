@@ -34,6 +34,11 @@ module ZXingFFI
     attr_accessor :max_dpi
     # @return [Integer] maximum pixels per bitmap
     attr_accessor :max_pixels
+    # @return [Integer, nil] with +oversize: :downscale+, the most pixels a raster may have; larger ones still raise
+    attr_accessor :max_source_pixels
+    # @return [Symbol] rasters over +max_pixels+: +:raise+ ({LimitExceeded}) or +:downscale+ (the libvips loader decodes
+    #   them smaller to fit; positions stay in the original's pixels)
+    attr_accessor :oversize
     # @return [Integer, nil] maximum number of pages per document (nil = unlimited)
     attr_accessor :max_pages
     # @return [Numeric] seconds allowed per page render
@@ -53,6 +58,8 @@ module ZXingFFI
       @default_dpi = 300
       @max_dpi = 600
       @max_pixels = 64_000_000
+      @max_source_pixels = 1_000_000_000
+      @oversize = :raise
       @max_pages = nil
       @render_timeout = 60
       @subprocess_memory_limit = 2 * 1024**3
@@ -89,6 +96,8 @@ module ZXingFFI
         default_dpi: default_dpi,
         max_dpi: max_dpi,
         max_pixels: max_pixels,
+        max_source_pixels: max_source_pixels,
+        oversize: oversize,
         max_pages: max_pages,
         render_timeout: render_timeout,
         subprocess_memory_limit: subprocess_memory_limit,

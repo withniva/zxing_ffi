@@ -1657,6 +1657,27 @@
   notes: US Letter at 300 dpi (2550x3300) with body text; Code 128, X = 2 px (6.7
     mil), 40 px tall. Found by the base pass; the page is too large for the 2x high_res
     pass (longest side >= 2000 px).
+- file: images/tiny_qr_1_5px_upscale.png
+  category: tiny
+  kind: png
+  requires:
+  - transformer
+  effort: normal
+  options: {}
+  expect_error:
+  expected:
+  - format: qr_code
+    text: zxing_ffi/tiny_qr_1_5px_upscale mollit pariatur qui consectetur ipsum velit
+      quis sed cupidatat do
+    page: 1
+    center:
+    - 280.5
+    - 400.3
+    tolerance: 6
+    rotation: 0
+  notes: '560x580 at 100 dpi, rendered soft (composed at 390 dpi, blurred, downscaled):
+    QR, EC level L, 1.54 px modules. Missed by the base pass; found by the high_res
+    pass, whose bicubic 2x upscale resolves the modules (replicating pixels did not).'
 - file: images/multi_6codes.png
   category: multi
   kind: png

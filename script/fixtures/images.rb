@@ -144,8 +144,8 @@ module ImageFixtures
 
     def height = @image.height
 
-    # The image with its resolution recorded (vips stores pixels per mm).
-    def output = @image.copy(xres: dpi / 25.4, yres: dpi / 25.4)
+    # The image with its resolution recorded (vips stores pixels per mm); +dpi+ overrides it after a resize.
+    def output(dpi: self.dpi) = @image.copy(xres: dpi / 25.4, yres: dpi / 25.4)
 
     def expected(page: nil)
       @marks.map do |m|
@@ -861,8 +861,8 @@ module ImageFixtures
 
     # Tiny codes on a US Letter page at 300 dpi. All are found by the base pass with zxing-cpp 3.1.1. Measured while
     # calibrating: at 1.3-1.7 px per module with smooth resampling, whether a code decodes flips with the payload and
-    # sub-pixel phase, and the 2x high_res pass (rasters < 2000 px only) rescued none of the misses, so no fixture
-    # sits in that fragile band.
+    # sub-pixel phase. The 2x high_res pass (rasters < 2000 px only) rescued none of the misses while it replicated
+    # pixels; now that it upscales bicubically it finds most of them (tiny_upscale, on a page small enough for it).
     def tiny
       [
         ["tiny_qr_1_5px.png", "QR, 1.5 px modules (rendered at 3 px, box-downsampled 2x: anti-aliased)",
@@ -882,6 +882,28 @@ module ImageFixtures
           notes: "US Letter at 300 dpi (2550x3300) with body text; #{what}. Found by the base pass; the page is " \
             "too large for the 2x high_res pass (longest side >= 2000 px).")
       end
+      tiny_upscale
+    end
+
+    # A small, soft render: composed at 390 dpi with 6 px QR modules, blurred, downscaled to 100 dpi. The QR (EC level
+    # L, version 5) ends up with 1.54 px modules and about half of its pixels mid-gray. Payload seed and placement
+    # were picked so that zxing-cpp 3.1.1's base pass misses it (as it misses about a third of such renders) while
+    # the bicubic upscale finds it, through libvips and ImageMagick alike and with ±1 noise added.
+    def tiny_upscale
+      scene = Scene.new(2184, 2262, dpi: 390)
+      scene.text("Lorem ipsum dolor sit amet", 94, 70, pt: 11, font: "sans bold")
+      scene.text(pseudo_text(Random.new(42), 70), 94, 203, pt: 8, width: 1996)
+      rng = Random.new(4)
+      text = +"zxing_ffi/tiny_qr_1_5px_upscale"
+      text << " " << WORDS[rng.rand(WORDS.size)] while text.size < 96
+      scene.place_centered(qr(text, module_px: 6, level: :l), 1094, 1561, tolerance: 6)
+      scene.blur(2.4).resize(0.2564)
+      file = "tiny_qr_1_5px_upscale.png"
+      scene.output(dpi: 100).pngsave(path(file), compression: 9, keep: :none)
+      add(file, category: "tiny", kind: "png", effort: "normal", requires: ["transformer"], expected: scene.expected,
+        notes: "560x580 at 100 dpi, rendered soft (composed at 390 dpi, blurred, downscaled): QR, EC level L, " \
+          "1.54 px modules. Missed by the base pass; found by the high_res pass, whose bicubic 2x upscale resolves " \
+          "the modules (replicating pixels did not).")
     end
 
     # --- several codes per page -----------------------------------------------------------------------------------

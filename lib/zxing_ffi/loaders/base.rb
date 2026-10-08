@@ -18,8 +18,10 @@ module ZXingFFI
     # @!attribute number [Integer] 1-based page/frame number
     # @!attribute image [Image] normalized 8-bit luminance image
     # @!attribute dpi [Integer, nil] render DPI (PDF) or nil for rasters
-    # @!attribute scale_to_base [Float] factor mapping this image's pixels to the page's base image (1.0 for the base)
-    # @!attribute metadata [Hash] what was applied, e.g. +orientation_applied:+, +aspect_corrected:+, +dpi_capped:+
+    # @!attribute scale_to_base [Float] factor mapping this image's pixels to the page's base image: 1.0, or above 1
+    #   for a raster decoded downscaled, whose positions are reported in the original's pixels
+    # @!attribute metadata [Hash] what was applied, e.g. +orientation_applied:+, +aspect_corrected:+, +dpi_capped:+,
+    #   +downscaled:+ (+{from: [width, height], scale:}+)
     Page = Data.define(:number, :image, :dpi, :scale_to_base, :metadata)
 
     # Base class for loaders. Subclasses implement the class-level capability checks and {#open}.
@@ -67,6 +69,13 @@ module ZXingFFI
         # @return [String]
         def install_hint
           ""
+        end
+
+        # Whether this loader decodes rasters over +max_pixels+ smaller to fit when +oversize+ is +:downscale+
+        # (the others raise {LimitExceeded} regardless).
+        # @return [Boolean]
+        def downscales?
+          false
         end
 
         # Tool versions and capabilities, for {ZXingFFI.diagnostics}.

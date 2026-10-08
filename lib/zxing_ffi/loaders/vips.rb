@@ -11,6 +11,10 @@ module ZXingFFI
     # Consequently vips renders PDFs only after opting in with +vips_block_untrusted = false+ — and a crash in
     # libvips or poppler-glib then takes down the Ruby process.
     #
+    # With +oversize: :downscale+, rasters over +max_pixels+ (up to +max_source_pixels+) are decoded smaller to fit,
+    # without ever holding them at full size: JPEG decodes at 1/2, 1/4 or 1/8 and WebP at any scale directly, other
+    # formats stream through the resize.
+    #
     # Documents are safe to render concurrently (each render builds its own libvips pipeline).
     class VipsLoader < Base
       # Sniffed kind => libvips load operation.
@@ -39,6 +43,9 @@ module ZXingFFI
         def install_hint
           "install libvips (brew install vips / apt install libvips-tools) and the ruby-vips gem"
         end
+
+        # (see Base.downscales?)
+        def downscales? = true
 
         # Whether this libvips can load +kind+ right now (operation present and, unless opted in, trusted).
         def supports?(kind)
@@ -150,9 +157,15 @@ module ZXingFFI
           raise RenderError.new("libvips failed on #{source.name}: #{Pipeline.error_summary(e)}", stderr: e.message[0, 4096])
         end
 
-        # Flattens alpha onto white, converts to 8-bit single-band luminance and copies it into an Image.
+        # Converts to 8-bit single-band luminance and copies it into an Image.
         def to_image(vimage)
           check_pixels!(vimage.width, vimage.height)
+          vimage = gray(vimage)
+          Image.new(vimage.write_to_memory, width: vimage.width, height: vimage.height)
+        end
+
+        # Alpha flattened onto white, then 8-bit single-band luminance.
+        def gray(vimage)
           if vimage.has_alpha?
             white = %i[ushort short].include?(vimage.format) ? 65_535 : 255
             vimage = vimage.flatten(background: [white])
@@ -160,7 +173,7 @@ module ZXingFFI
           vimage = vimage.colourspace(:b_w) unless vimage.interpretation == :"b-w" && vimage.format == :uchar
           vimage = vimage.extract_band(0) if vimage.bands > 1
           vimage = vimage.cast(:uchar) unless vimage.format == :uchar
-          Image.new(vimage.write_to_memory, width: vimage.width, height: vimage.height)
+          vimage
         end
 
         def check_pixels!(width, height)
@@ -195,28 +208,78 @@ module ZXingFFI
         end
 
         # Applies the normalization contract: aspect correction (on the stored axes, because libvips'
-        # autorot does not swap xres/yres), EXIF orientation, alpha → white, 16-bit scaling, 8-bit gray.
+        # autorot does not swap xres/yres), EXIF orientation, alpha → white, 16-bit scaling, 8-bit gray. A frame over
+        # max_pixels raises, or with +oversize: :downscale+ is decoded smaller to fit.
         def render(number, dpi: nil, timeout: nil) # timeout: in-process, cannot be enforced
           check_page!(number)
           vips_call do
             vimage = load(number - 1)
-            vimage, aspect = correct_aspect(vimage)
+            width, height = corrected_size(vimage)
+            scale = fit_scale(width, height)
+            vimage, aspect, scale = (scale < 1) ? downscaled(number - 1, vimage, scale) : [*correct_aspect(vimage), 1.0]
             orientation = orientation_of(vimage)
             orientation = nil if orientation == 1 # "normal": nothing to apply
             vimage = vimage.autorot if orientation
-            image = to_image(vimage)
-            Page.new(number: number, image: image, dpi: nil, scale_to_base: 1.0, metadata: {
-              loader: :vips, orientation_applied: orientation, aspect_corrected: aspect
-            })
+            metadata = {loader: :vips, orientation_applied: orientation, aspect_corrected: aspect}
+            if scale < 1
+              width, height = height, width if [5, 6, 7, 8].include?(orientation)
+              metadata[:downscaled] = {from: [width, height], scale: scale}
+            end
+            Page.new(number: number, image: to_image(vimage), dpi: nil, scale_to_base: 1.0 / scale, metadata: metadata)
           end
         end
 
         private
 
-        def load(index)
+        def load(index, **options)
           vips_call do
-            options = PAGED.include?(@operation) ? {page: index} : {}
+            options[:page] = index if PAGED.include?(@operation)
             Pipeline.load_fresh(@operation, source.path, **options)
+          end
+        end
+
+        # 1.0 when a frame of +width+ x +height+ fits max_pixels. Otherwise it raises LimitExceeded, unless
+        # +oversize: :downscale+ lets it be decoded smaller (up to max_source_pixels): then the scale that fits.
+        def fit_scale(width, height)
+          pixels = width * height
+          return 1.0 unless @config.max_pixels && pixels > @config.max_pixels
+
+          check_pixels!(width, height) unless @config.oversize == :downscale
+          ceiling = @config.max_source_pixels
+          if ceiling && pixels > ceiling
+            raise LimitExceeded.new("#{width}x#{height} (#{pixels} pixels) exceeds max_source_pixels #{ceiling}",
+              limit: :max_source_pixels, value: pixels)
+          end
+          Math.sqrt(@config.max_pixels.to_f / pixels)
+        end
+
+        # Frame +index+ (+header+ is its lazily loaded image) decoded at about +scale+ and aspect-corrected, as gray
+        # in memory, without holding it at full size. Returns the image, the aspect correction applied and the exact
+        # scale, lowered until the rounded size fits max_pixels.
+        def downscaled(index, header, scale)
+          hscale, vscale = aspect_scale(header) || [1.0, 1.0]
+          loaded, options = shrink_on_load(scale * [hscale, vscale].max)
+          options[:access] = :sequential if [hscale, vscale].max * scale <= loaded # an axis to upsample needs random access
+          vimage = gray(load(index, **options))
+          scale *= 0.9999 while (vimage.width * hscale * scale / loaded).ceil * (vimage.height * vscale * scale / loaded).ceil > @config.max_pixels
+          x = hscale * scale / loaded
+          y = vscale * scale / loaded
+          vimage = vimage.resize(x, vscale: y) unless x == 1 && y == 1
+          aspect = resolutions(header).map { |r| r.round(1) } unless hscale == 1 && vscale == 1
+          [vimage.copy_memory, aspect, scale]
+        end
+
+        # Load options that make the decoder itself shrink by about +scale+, never below it: JPEG by 1/2, 1/4 or 1/8,
+        # WebP by any factor. Returns the factor they apply and the options.
+        def shrink_on_load(scale)
+          case @operation
+          when "jpegload"
+            shrink = [8, 4, 2].find { |factor| factor * scale <= 1 }
+            shrink ? [1.0 / shrink, {shrink: shrink}] : [1.0, {}]
+          when "webpload"
+            ::Vips::Introspect.get("webpload").optional_input.key?("scale") ? [scale, {scale: scale}] : [1.0, {}]
+          else
+            [1.0, {}]
           end
         end
 
