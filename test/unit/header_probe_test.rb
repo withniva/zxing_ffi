@@ -116,6 +116,14 @@ class HeaderProbeTest < Minitest::Test
     assert_nil PROBE.check!(write("x.jpg", "\xFF\xD8\xFF".b), :jpeg, 1)
   end
 
+  def test_check_names_the_limit_it_enforces
+    path = write("big.png", png_header(10_000, 10_000))
+    error = assert_raises(ZXingFFI::LimitExceeded) { PROBE.check!(path, :png, 64_000_000, limit: :max_source_pixels) }
+
+    assert_equal :max_source_pixels, error.limit
+    assert_match(/exceeding max_source_pixels 64000000\z/, error.message)
+  end
+
   def test_scanner_rejects_a_declared_bomb_before_any_loader_runs
     path = write("bomb.png", png_header(9_000, 9_000) + ("\x00" * 64).b)
     error = assert_raises(ZXingFFI::LimitExceeded) { ZXingFFI.scan(path, loader: :pnm) } # PnmLoader can't even read PNG

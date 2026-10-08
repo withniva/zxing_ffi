@@ -134,7 +134,8 @@ page in page order (or returns an Enumerator). Inputs can be a path (`String`/`P
 | `min_length` | `{}` | minimum text length per format, e.g. `{itf: 6}` |
 | `timeout` | — | per-page budget in seconds: caps renders (re-renders get what is left) and stops escalation (the first pass always runs) |
 | `instrument` | — | callable receiving `(event, payload)` for `:page_loaded`, `:pass_completed`, `:page_completed` |
-| `max_pixels`, `max_pages` | config | per-call limits |
+| `oversize` | `:raise` | rasters over `max_pixels`: `:raise` raises `LimitExceeded`; `:downscale` decodes them smaller to fit (libvips loader only: JPEG and WebP shrink while decoding, other formats stream), up to `max_source_pixels`. Positions and `PageResult#width`/`height` stay in the original's pixels and `PageResult#metadata[:downscaled]` holds the scale; codes left under ~2 px per module are lost |
+| `max_pixels`, `max_source_pixels`, `max_pages` | config | per-call limits |
 
 Every `ZXingFFI.read` option below is accepted too and applies to every pass.
 
@@ -216,6 +217,8 @@ ZXingFFI.configure do |c|
   c.default_dpi    = 300
   c.max_dpi        = 600
   c.max_pixels     = 64_000_000
+  c.oversize       = :raise          # or :downscale (see the scan options)
+  c.max_source_pixels = 1_000_000_000 # with oversize: :downscale, larger rasters still raise
   c.max_pages      = nil
   c.render_timeout = 60
   c.subprocess_memory_limit = 2 * 1024**3
@@ -237,7 +240,9 @@ The gem is meant to process untrusted documents:
   limit (`subprocess_memory_limit`, enforced on Linux only — macOS ignores `RLIMIT_AS`). Passwords are only ever passed
   as the argument after `-upw`.
 - **Pixel cap**: every bitmap is checked against `max_pixels` before it is rendered or decoded. PDF pages that would
-  exceed it are rendered at a lower (possibly fractional) DPI; rasters raise `ZXingFFI::LimitExceeded`.
+  exceed it are rendered at a lower (possibly fractional) DPI; rasters raise `ZXingFFI::LimitExceeded`, unless
+  `oversize: :downscale` has libvips decode them smaller to fit (never holding them at full size), in which case the
+  header check holds them to `max_source_pixels` instead.
 - **No format confusion**: inputs are identified by magic bytes, never by extension. ImageMagick always reads with an
   explicit coder (`png:/path`), never sees PDF, PostScript, SVG, MVG, MSL or text, and gets special characters in
   paths neutralized. libvips is called with the loader for the sniffed type, and operations libvips flags as

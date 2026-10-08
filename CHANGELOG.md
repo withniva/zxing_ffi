@@ -2,6 +2,10 @@
 
 ## 0.1.1 (2026-10-08)
 
+- **`oversize: :downscale`** (scan option and `config.oversize`): rasters over `max_pixels` are decoded smaller to fit
+  instead of raising `LimitExceeded`, by the libvips loader (JPEG and WebP shrink while decoding, other formats
+  stream), up to the new `max_source_pixels` (default 1 GP; larger ones still raise). Positions and page sizes stay
+  in the original's pixels and `PageResult#metadata[:downscaled]` records the scale. The default stays `:raise`.
 - **`high_res` pass**: rasters are upscaled with a centered bicubic (Catmull-Rom) filter instead of pixel
   replication, which kept the aliasing of codes rasterized at 1–2 px per module. QR codes at ~1.5 px per module
   that every pass missed are now found at `effort: :normal`. Both transformers' `resize` upscale this way at any

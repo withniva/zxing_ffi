@@ -13,6 +13,8 @@ class ConfigTest < Minitest::Test
     assert_equal 300, config.default_dpi
     assert_equal 600, config.max_dpi
     assert_equal 64_000_000, config.max_pixels
+    assert_equal 1_000_000_000, config.max_source_pixels
+    assert_equal :raise, config.oversize
     assert_nil config.max_pages
     assert_equal 60, config.render_timeout
     assert_equal 2 * 1024**3, config.subprocess_memory_limit
@@ -66,8 +68,8 @@ class ConfigTest < Minitest::Test
   def test_to_h_lists_every_setting
     keys = ZXingFFI::Config.new.to_h.keys
 
-    assert_equal %i[library_path pdf_loaders image_loaders transformers default_dpi max_dpi max_pixels max_pages
-      render_timeout subprocess_memory_limit tool_paths vips_block_untrusted], keys
+    assert_equal %i[library_path pdf_loaders image_loaders transformers default_dpi max_dpi max_pixels max_source_pixels
+      oversize max_pages render_timeout subprocess_memory_limit tool_paths vips_block_untrusted], keys
   end
 
   def test_config_is_reset_between_tests_part_one

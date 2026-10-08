@@ -159,6 +159,14 @@ class ImageMagickTest < Minitest::Test
     assert_equal [IMAGES::QR_TEXT], ZXingFFI.scan(special, loader: :image_magick).map(&:text)
   end
 
+  def test_oversize_downscale_needs_libvips
+    path = convert("qr.png")
+    error = assert_raises(ZXingFFI::LimitExceeded) do
+      ZXingFFI.scan(path, loader: :image_magick, oversize: :downscale, max_pixels: 100)
+    end
+    assert_equal :max_pixels, error.limit, "ImageMagick does not downscale: the header check keeps max_pixels"
+  end
+
   def test_max_pixels_checked_from_identify
     path = convert("qr2.png")
     error = assert_raises(ZXingFFI::LimitExceeded) { load(path, config: ZXingFFI::Config.new.with(max_pixels: 100)) { flunk } }
