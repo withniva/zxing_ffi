@@ -8,7 +8,8 @@
    at `:normal`.
 4. `rake zxing:build` verified on a clean Ubuntu and macOS machine following the README; `zxing-scan --diagnose` shows
    the library, loaders and tools.
-5. Version bumped in `lib/zxing_ffi/version.rb`, `CHANGELOG.md` dated, `yard stats` reviewed (public API documented).
+5. Version bumped in `lib/zxing_ffi/version.rb` (and in `Gemfile.lock`: `bundle install`), `CHANGELOG.md` dated,
+   `yard stats` reviewed (public API documented).
 6. `gem build zxing_ffi.gemspec` succeeds without warnings; inspect the file list (`LICENSE.txt` included; no
    fixtures, no vendor build).
 7. Platform gems: the "Platform gems" workflow is green for the release commit (run it with workflow_dispatch; it
@@ -21,10 +22,17 @@
    [IMAGE=…]` (Linux needs Docker; `DOCKER_RUN_ARGS="--cpus=4 --memory=6g"` caps it; `rake gem:platforms` lists the
    platforms). After a zxing-cpp upgrade, re-check the bundled library's licenses (packaging aborts if libzueci's
    notices changed) and the baselines above.
-8. Tag `vX.Y.Z` and push the tag: the workflow rebuilds every gem from scratch (no caches for tags). From that run,
-   download the `zxing_ffi-gems` artifact (the ruby gem, six platform gems, `SHA256SUMS`), check the sums, and
-   spot-check a platform gem with `gem specification <file> files` (`LICENSE.txt`, one `vendor/lib/libZXing.*` plus
-   `NOTICE.txt`, `LICENSE-zxing-cpp.txt`, `LICENSE-libzueci.txt`).
-9. `gem push` each of the seven gems (MFA required: `gem push --otp <code> <file>`; RubyGems trusted publishing from
-   the tag workflow could replace this later), then the GitHub release with the changelog section.
+8. Merge the release commit into `main`, then publish from a clean, up-to-date `main` with
+   `mise exec -- bundle exec rake release` (`DRY_RUN=1` first: it only checks and reports). It refuses to run unless
+   CI passed for the commit and `CHANGELOG.md` has the dated section, and asks you to type the version before pushing
+   anything. It tags `vX.Y.Z` and pushes the tag, so the Platform gems workflow rebuilds every gem from scratch (no
+   caches for tags), and waits for that run. It then downloads the run's `zxing_ffi-gems` artifact (the ruby gem, six
+   platform gems, `SHA256SUMS`) into `pkg/vX.Y.Z/` and checks the sums and every gem's name, version, platform and
+   files: `LICENSE.txt`, and for platform gems one `vendor/lib/libZXing.*` plus `NOTICE.txt`, `LICENSE-zxing-cpp.txt`
+   and `LICENSE-libzueci.txt`. It pushes the platform gems, then the ruby gem, asking for the RubyGems OTP (MFA is
+   required; it asks again when a code is rejected). Last, it creates the GitHub release with the changelog section
+   (`NOTES=file` replaces it) and the gems attached. Every step skips what is done, so after a failure (re-run failed
+   jobs with `gh run rerun <id> --failed`) `rake release` resumes. Needs `gh` logged in and a RubyGems API key with
+   push scope (`gem signin`).
+9. Point consumers at the new version. RubyGems trusted publishing from the tag workflow could replace the OTP later.
 

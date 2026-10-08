@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-10-08)
 
 - **`high_res` pass**: rasters are upscaled with a centered bicubic (Catmull-Rom) filter instead of pixel
   replication, which kept the aliasing of codes rasterized at 1–2 px per module. QR codes at ~1.5 px per module
   that every pass missed are now found at `effort: :normal`. Both transformers' `resize` upscale this way at any
   scale above 1.
+- **Tooling**: `rake release` publishes a release from `main`: it tags the commit, waits for the Platform gems
+  workflow, checks the seven gems that workflow built, pushes them to RubyGems (asking for the OTP) and creates the
+  GitHub release. It replaces Bundler's `rake release`, which pushes a locally built ruby gem only.
 
 ## 0.1.0 (2026-10-01)
 
