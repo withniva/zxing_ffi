@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 (2026-10-08)
+## 0.2.0 (2026-10-08)
 
 - **`oversize: :downscale`** (scan option and `config.oversize`): rasters over `max_pixels` are decoded smaller to fit
   instead of raising `LimitExceeded`, by the libvips loader (JPEG and WebP shrink while decoding, other formats
