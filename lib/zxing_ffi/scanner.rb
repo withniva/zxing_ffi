@@ -6,8 +6,8 @@ module ZXingFFI
   # @!attribute page [Integer] 1-based
   # @!attribute barcodes [Array<Barcode>] ordered top-to-bottom, left-to-right
   # @!attribute dpi [Integer, nil] base render DPI (PDF) or nil
-  # @!attribute width [Integer, nil] base image width in pixels
-  # @!attribute height [Integer, nil] base image height in pixels
+  # @!attribute width [Integer, nil] base image width in pixels (the original's for a raster decoded downscaled)
+  # @!attribute height [Integer, nil] base image height in pixels (the original's for a raster decoded downscaled)
   # @!attribute passes_run [Array<Symbol>]
   # @!attribute skipped_passes [Hash{Symbol => String}] passes that could not run, with the reason
   # @!attribute duration [Float] seconds spent on the page
@@ -20,8 +20,8 @@ module ZXingFFI
   class Scanner
     # Options that only the scanner understands.
     SCAN_OPTIONS = %i[
-      effort passes stop dpi max_dpi max_pixels max_pages pages password threads on_page_error loader
-      min_length timeout instrument
+      effort passes stop dpi max_dpi max_pixels max_source_pixels oversize max_pages pages password threads
+      on_page_error loader min_length timeout instrument
     ].freeze
 
     # Every option +scan+/+scan_pages+ accept: the scanner's plus every {ZXingFFI.read} option.
@@ -29,6 +29,9 @@ module ZXingFFI
 
     # Accepted values of +on_page_error:+.
     ON_PAGE_ERROR = %i[raise skip].freeze
+
+    # Accepted values of +oversize:+.
+    OVERSIZE = %i[raise downscale].freeze
 
     # @param options [Hash] see {ZXingFFI.scan}
     # @raise [ArgumentError] for unknown or invalid options (before any input is opened)
@@ -51,6 +54,12 @@ module ZXingFFI
       raise ArgumentError, "instrument must respond to #call" if @instrument && !@instrument.respond_to?(:call)
 
       @config = effective_config(options)
+      raise ArgumentError, "oversize must be :raise or :downscale, got #{@config.oversize.inspect}" unless OVERSIZE.include?(@config.oversize)
+      source_pixels = @config.max_source_pixels
+      if source_pixels && !(source_pixels.is_a?(Integer) && source_pixels.positive?)
+        raise ArgumentError, "max_source_pixels must be a positive Integer or nil, got #{source_pixels.inspect}"
+      end
+
       @reader_options = Reader::Options.new(options.slice(*Reader::OPTION_KEYS))
       @min_length = validate_min_length(options.fetch(:min_length, {}))
       @notify_mutex = Mutex.new
@@ -102,7 +111,10 @@ module ZXingFFI
     private
 
     def scan_source(source, &block)
-      HeaderProbe.check!(source.path, source.kind, @config.max_pixels) unless source.kind == :pdf
+      unless source.kind == :pdf
+        pixels, limit = raster_limit(source.kind)
+        HeaderProbe.check!(source.path, source.kind, pixels, limit: limit)
+      end
       loader_class = Loaders::Registry.loader_for(source.kind, config: @config, loader: @loader)
       document = loader_class.new(@config).open(source, password: @password)
       begin
@@ -176,10 +188,11 @@ module ZXingFFI
       rerender = pdf ? ->(dpi) { document.render(number, dpi: dpi, timeout: deadline && [deadline - monotonic, 0.05].max) } : nil
       result = strategy.run(page, rerender: rerender, page_info: info, deadline: deadline,
         notify: ->(event, payload) { notify(event, page: number, **payload) })
-      barcodes = Scanner.order(result.barcodes.map { |barcode| finalize(barcode, number, page.dpi) })
+      barcodes = Scanner.order(result.barcodes.map { |barcode| finalize(barcode, number, page) })
       metadata = page.metadata.merge(choice ? {dpi_source: choice.source, dpi_capped: choice.capped} : {})
+      width, height = page.metadata.dig(:downscaled, :from) || [page.image.width, page.image.height]
       page_result = PageResult.new(
-        page: number, barcodes: barcodes, dpi: page.dpi, width: page.image.width, height: page.image.height,
+        page: number, barcodes: barcodes, dpi: page.dpi, width: width, height: height,
         passes_run: result.passes_run, skipped_passes: result.skipped_passes, duration: monotonic - started,
         error: nil, metadata: metadata
       )
@@ -206,10 +219,26 @@ module ZXingFFI
         default_dpi: @config.default_dpi, max_dpi: @config.max_dpi, max_pixels: @config.max_pixels)
     end
 
-    # Adds page metadata and PDF page coordinates (points from the top-left of the displayed page).
-    def finalize(barcode, number, dpi)
-      page_position = dpi && barcode.position.map { |p| Geometry::Point.new((p.x * 72.0 / dpi).round(2), (p.y * 72.0 / dpi).round(2)) }
-      barcode.with(page: number, dpi: dpi, page_position: page_position)
+    # Adds page metadata and PDF page coordinates (points from the top-left of the displayed page); positions in a
+    # raster decoded downscaled are scaled back to the original's pixels.
+    def finalize(barcode, number, page)
+      dpi = page.dpi
+      position = barcode.position.transform(Geometry::Affine.scale(page.scale_to_base)).round
+      page_position = dpi && position.map { |p| Geometry::Point.new((p.x * 72.0 / dpi).round(2), (p.y * 72.0 / dpi).round(2)) }
+      barcode.with(position: position, page: number, dpi: dpi, page_position: page_position)
+    end
+
+    # The pixels a raster may declare, with the limit's name: max_source_pixels when +oversize: :downscale+ and its
+    # loader can decode it smaller to fit, otherwise max_pixels.
+    def raster_limit(kind)
+      return [@config.max_pixels, :max_pixels] unless @config.oversize == :downscale
+
+      downscales = begin
+        Loaders::Registry.loader_for(kind, config: @config, loader: @loader).downscales?
+      rescue LoaderUnavailable
+        false
+      end
+      downscales ? [@config.max_source_pixels, :max_source_pixels] : [@config.max_pixels, :max_pixels]
     end
 
     def select_pages(count)
@@ -239,7 +268,7 @@ module ZXingFFI
     end
 
     def effective_config(options)
-      overrides = options.slice(:max_dpi, :max_pixels, :max_pages)
+      overrides = options.slice(:max_dpi, :max_pixels, :max_source_pixels, :oversize, :max_pages)
       if @timeout
         overrides[:render_timeout] = [ZXingFFI.config.render_timeout, @timeout].compact.min
       end

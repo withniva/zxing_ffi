@@ -159,6 +159,14 @@ class ImageMagickTest < Minitest::Test
     assert_equal [IMAGES::QR_TEXT], ZXingFFI.scan(special, loader: :image_magick).map(&:text)
   end
 
+  def test_oversize_downscale_needs_libvips
+    path = convert("qr.png")
+    error = assert_raises(ZXingFFI::LimitExceeded) do
+      ZXingFFI.scan(path, loader: :image_magick, oversize: :downscale, max_pixels: 100)
+    end
+    assert_equal :max_pixels, error.limit, "ImageMagick does not downscale: the header check keeps max_pixels"
+  end
+
   def test_max_pixels_checked_from_identify
     path = convert("qr2.png")
     error = assert_raises(ZXingFFI::LimitExceeded) { load(path, config: ZXingFFI::Config.new.with(max_pixels: 100)) { flunk } }
@@ -170,13 +178,24 @@ class ImageMagickTest < Minitest::Test
     reference = ZXingFFI::FakeTransformer.new
     image = IMAGES.qr_image(canvas: [150, 120], offset: [10, 0])
 
-    assert_equal reference.resize(image, 2).to_bytes, transformer.resize(image, 2).to_bytes
+    # Gray ink on gray paper keeps Catmull-Rom's overshoot inside 0..255: ImageMagick builds without HDRI (Ubuntu's
+    # IM 6) clamp the intermediate pass of -resize, which moves pixels near black-on-white corners by up to 14 levels.
+    gray = ZXingFFI::Image.new(image.to_bytes.tr("\x00\xFF".b, "\x40\xC0".b), width: image.width, height: image.height)
+    assert_pixels_within 1, reference.resize(gray, 2), transformer.resize(gray, 2)
     half = transformer.resize(image, 0.5)
     assert_equal [75, 60], [half.width, half.height]
     [90, 180, 270].each do |degrees|
       assert_equal reference.rotate(image, degrees).to_bytes, transformer.rotate(image, degrees).to_bytes, "#{degrees}°"
     end
     assert_equal image.to_bytes, transformer.rotate(image, 360).to_bytes
+  end
+
+  def test_transformer_upscale_resolves_soft_1_5px_modules
+    transformer = ZXingFFI::Transformers::ImageMagickTransformer.new
+    load(fixture_path("images", "tiny_qr_1_5px_upscale.png")) do |page|
+      texts = ZXingFFI.read(transformer.resize(page.image, 2)).map(&:text)
+      assert texts.any? { |text| text.start_with?("zxing_ffi/tiny_qr_1_5px_upscale") }, "found #{texts.inspect}"
+    end
   end
 
   def test_transformer_arbitrary_rotation

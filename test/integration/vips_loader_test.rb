@@ -195,6 +195,87 @@ class VipsLoaderTest < Minitest::Test
     assert_equal 116 * 116, error.value
   end
 
+  # A 600x400 page (240,000 pixels) with the QR at 6 px modules; returns the path and the code found at full size.
+  def oversized(name, &save)
+    image = qr_vips(scale: 6, canvas: [600, 400], offset: [150, 30])
+    path = write(name) { |p| save.call(image, p) }
+    [path, ZXingFFI.scan(path).first]
+  end
+
+  # scan_pages with +options+; returns the page and the size of the image the passes decoded.
+  def scan_downscaled(path, **options)
+    loaded = nil
+    page = ZXingFFI.scan_pages(path, oversize: :downscale, **options, instrument: ->(event, payload) {
+      loaded = [payload[:width], payload[:height]] if event == :page_loaded
+    }).first
+    [page, loaded]
+  end
+
+  def test_oversize_raises_by_default
+    path, = oversized("qr.png") { |image, p| image.pngsave(p) }
+    error = assert_raises(ZXingFFI::LimitExceeded) { ZXingFFI.scan(path, max_pixels: 100_000) }
+    assert_equal :max_pixels, error.limit
+  end
+
+  def test_oversize_downscale_decodes_smaller_and_reports_in_the_originals_pixels
+    {"qr.png" => ->(image, p) { image.pngsave(p) }, "qr.tif" => ->(image, p) { image.tiffsave(p) },
+     "qr.webp" => ->(image, p) { image.webpsave(p, lossless: true) }}.each do |name, save|
+      path, full = oversized(name, &save)
+      page, loaded = scan_downscaled(path, max_pixels: 100_000)
+
+      assert_operator loaded.inject(:*), :<=, 100_000, name
+      assert_in_delta Math.sqrt(100_000 / 240_000.0), page.metadata[:downscaled][:scale], 0.01, name
+      assert_equal [600, 400], page.metadata[:downscaled][:from], name
+      assert_equal [600, 400], [page.width, page.height], name
+      barcode = page.barcodes.first
+      assert_equal IMAGES::QR_TEXT, barcode.text, name
+      assert_in_delta full.center.x, barcode.center.x, 3, "#{name}: x in the original's pixels"
+      assert_in_delta full.center.y, barcode.center.y, 3, "#{name}: y in the original's pixels"
+    end
+  end
+
+  def test_oversize_downscale_shrinks_jpeg_while_decoding_and_applies_exif_orientation
+    upright = qr_vips(scale: 6, canvas: [600, 400], offset: [150, 30])
+    full = ZXingFFI.read(ZXingFFI::Image.new(upright.write_to_memory, width: 600, height: 400)).first
+    stored = upright.rot(:d270).mutate { |m| m.set_type!(GObject::GINT_TYPE, "orientation", 6) }
+    path = write("exif6.jpg") { |p| stored.jpegsave(p, Q: 95) }
+    page, loaded = scan_downscaled(path, max_pixels: 50_000) # scale 0.46: the JPEG decodes at 1/2, then resizes
+
+    assert_operator loaded.inject(:*), :<=, 50_000
+    assert_operator loaded[0], :>, loaded[1], "displayed upright"
+    assert_equal [600, 400], [page.width, page.height]
+    assert_equal 6, page.metadata[:orientation_applied]
+    barcode = page.barcodes.first
+    assert_equal IMAGES::QR_TEXT, barcode.text
+    assert_in_delta full.center.x, barcode.center.x, 4
+    assert_in_delta full.center.y, barcode.center.y, 4
+  end
+
+  def test_oversize_downscale_flattens_alpha_before_resampling
+    path = fixture_path("images", "alpha_rgba_black_transparent.png")
+    width, height = ZXingFFI.scan_pages(path).first.then { |page| [page.width, page.height] }
+    page, = scan_downscaled(path, max_pixels: (width * height * 0.6).floor)
+    assert page.metadata[:downscaled]
+    refute_empty page.barcodes, "transparent black must become white before the resize"
+  end
+
+  def test_max_source_pixels_still_raises_when_downscaling
+    %w[qr.png qr.tif].each do |name| # PNG: the scanner's header check; TIFF: the loader
+      path, = oversized(name) { |image, p| image.write_to_file(p) }
+      error = assert_raises(ZXingFFI::LimitExceeded, name) do
+        ZXingFFI.scan(path, oversize: :downscale, max_pixels: 100_000, max_source_pixels: 200_000)
+      end
+      assert_equal [:max_source_pixels, 240_000], [error.limit, error.value], name
+    end
+  end
+
+  def test_a_valid_png_bomb_is_streamed_down_when_downscaling
+    page, loaded = scan_downscaled(fixture_path("images", "limits_png_bomb_9000x9000.png"))
+    assert_operator loaded.inject(:*), :<=, 64_000_000
+    assert_equal [9000, 9000], [page.width, page.height]
+    assert_empty page.barcodes
+  end
+
   def test_corrupt_file_raises_render_error
     path = write("broken.png") { |p| File.binwrite(p, "\x89PNG\r\n\x1a\n".b + ("\x00" * 64)) }
     assert_raises(ZXingFFI::RenderError, ZXingFFI::UnsupportedInput) { load(path) { flunk } }

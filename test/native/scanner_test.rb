@@ -336,7 +336,8 @@ class ScannerTest < Minitest::Test
     image = IMAGES.qr_image
     {
       effort: :extreme, stop: :never, dpi: 0, pages: 0, threads: 0, on_page_error: :ignore, timeout: -1,
-      instrument: 42, min_length: {nope: 3}, passes: %i[x], formats: :nope, bogus: 1
+      instrument: 42, min_length: {nope: 3}, passes: %i[x], formats: :nope, bogus: 1, oversize: :shrink,
+      max_source_pixels: 0
     }.each do |key, value|
       assert_raises(ArgumentError, "#{key}: #{value.inspect}") { ZXingFFI.scan(image, key => value) }
     end
